@@ -1,0 +1,26 @@
+[package]
+name = "port_redirector"
+version = "0.1.0"
+edition = "2018"
+authors = ["Ryan Wicks <ryan@voyis.com>"]
+homepage = "https://www.voyis.com"
+repository = "https://www.github.com/Voyis/PortRedirectorTool.git"
+description = "A tool for taking data form a port (network or serial) and retransmitting any data recieved on another medium."
+readme = "../README.md"
+
+[lib]
+name = "port_redirector"
+path = "src/lib.rs"
+
+[[bin]]
+name = "port_redirector_tool"
+path = "src/main.rs"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+bytes = "1"
+clap = "2.33.3"
+tokio-serial = "5.4.1"
+
