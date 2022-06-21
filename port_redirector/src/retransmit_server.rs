@@ -9,16 +9,21 @@ use tokio::sync::{mpsc, broadcast};
 /// tx channel and any data recieved on any socket will be sent on the rx channel. 
 ///
 /// ```rust
-/// let (tx, rx) = broadcast::channel(32);
-/// let tx1 = tx.clone();
+/// //Broadcast port for reading in data on the input port and outputting it on all broadcast channels
+/// let (broadcast_from_input, _) = broadcast::channel(32);
+/// let broadcast_from_input_1 = broadcast_from_input.clone();
+///
+/// //Mutiple producers to read data in from the server ports and output on the single output port.
+/// let (tx_to_input, rx_to_input) = mpsc::channel(32);
 ///
 /// //open the socket and start the reading process.
 /// let mut socket_reader = InputSocket::connect(socket_type).await?;
-/// tokio::spawn( async move { socket_reader.run_loop(tx, rx).await; });
+/// tokio::spawn( async move { socket_reader.run_loop(broadcast_from_input, rx_to_input).await; });
 ///
 /// // Set up server.
-/// let retransmit_server = RetransmitServer(output_port, tx1);
+/// let retransmit_server = RetransmitServer::new(output_port, tx_to_input, broadcast_from_input_1).await?;
 /// tokio::spawn( async move { retransmit_server.run_loop().await; });
+///
 /// ```
 pub struct RetransmitServer {
     server: TcpListener,
