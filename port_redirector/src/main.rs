@@ -4,12 +4,12 @@ use port_redirector::retransmit_server::RetransmitServer;
 
 use tokio::io;
 use tokio::signal;
-use tokio::sync::broadcast;
+use tokio::sync::{mpsc, broadcast};
 use clap::{Arg, App, value_t};
 use std::fmt::Write;
 
 /// This program opens the provided port (either TCP, UDP or Serial), starts a TCP server, and retransmits any data 
-/// given to that port to any client connected to that server.
+/// given to that port to any client connected to that server. It will also read in data from the server and retransmit on the single port.
 /// 
 /// To get a help message, run with the -h flag.
 /// 
@@ -78,7 +78,7 @@ The above command will open the serial port on COM6 at 115200 baud and retransmi
                 println!("Port required: {}",e); 
                 e.exit();
             });
-            InputSocket::TcpSocket { ip: ip.to_string(), port: Some(port), rd: None }
+            InputSocket::TcpSocket { ip: ip.to_string(), port: Some(port), rd: None, tx: None }
         }
         "udp" => {
             let port = clap::value_t!(matches, "port", u16).unwrap_or_else(|e| {
@@ -96,7 +96,7 @@ The above command will open the serial port on COM6 at 115200 baud and retransmi
                 println!("Baudrate required: {}",e); 
                 e.exit();
             });
-            InputSocket::Serial {port_name: port_name, baudrate: Some(baudrate), rd: None}
+            InputSocket::Serial {port_name: port_name, baudrate: Some(baudrate), rd: None, tx: None}
         }
         _ =>  { 
             let mut err_str = String::new();
@@ -106,15 +106,19 @@ The above command will open the serial port on COM6 at 115200 baud and retransmi
     };
 
 
-    let (tx, _) = broadcast::channel(32);
-    let tx1 = tx.clone();
+    //Broadcast port for reading in data on the input port and outputting it on all broadcast channels
+    let (broadcast_from_input, _) = broadcast::channel(32);
+    let broadcast_from_input_1 = broadcast_from_input.clone();
+
+    //Mutiple producers to read data in from the server ports and output on the single output port.
+    let (tx_to_input, rx_to_input) = mpsc::channel(32);
 
     //open the socket and start the reading process.
     let mut socket_reader = InputSocket::connect(socket_type).await?;
-    tokio::spawn( async move { socket_reader.run_loop(tx).await; });
+    tokio::spawn( async move { socket_reader.run_loop(broadcast_from_input, rx_to_input).await; });
 
     // Set up server.
-    let retransmit_server = RetransmitServer::new(output_port, tx1).await?;
+    let retransmit_server = RetransmitServer::new(output_port, tx_to_input, broadcast_from_input_1).await?;
     tokio::spawn( async move { retransmit_server.run_loop().await; });
 
     match signal::ctrl_c().await {

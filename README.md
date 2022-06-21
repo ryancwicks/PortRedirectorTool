@@ -1,4 +1,4 @@
-# PortRedirectoryTool
+# PortRedirectorTool
 
 A tool for redirecting incoming tcp socket and serial ports to multiple TCP endpoints.
 
