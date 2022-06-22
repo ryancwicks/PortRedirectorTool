@@ -10,25 +10,24 @@ use tokio::sync::{mpsc, broadcast};
 ///
 /// ```rust
 /// //Broadcast port for reading in data on the input port and outputting it on all broadcast channels
-/// let (broadcast_from_input, _) = broadcast::channel(32);
-/// let broadcast_from_input_1 = broadcast_from_input.clone();
+/// let (broadcast_from_input_tx, broadcast_from_input_rx) = broadcast::channel(32);
 ///
 /// //Mutiple producers to read data in from the server ports and output on the single output port.
 /// let (tx_to_input, rx_to_input) = mpsc::channel(32);
 ///
 /// //open the socket and start the reading process.
 /// let mut socket_reader = InputSocket::connect(socket_type).await?;
-/// tokio::spawn( async move { socket_reader.run_loop(broadcast_from_input, rx_to_input).await; });
+/// tokio::spawn( async move { socket_reader.run_loop(broadcast_from_input_tx, rx_to_input).await; });
 ///
 /// // Set up server.
-/// let retransmit_server = RetransmitServer::new(output_port, tx_to_input, broadcast_from_input_1).await?;
+/// let mut retransmit_server = RetransmitServer::new(output_port, tx_to_input, broadcast_from_input_rx).await?;
 /// tokio::spawn( async move { retransmit_server.run_loop().await; });
 ///
 /// ```
 pub struct RetransmitServer {
     server: TcpListener,
     tx_to_input: mpsc::Sender <Vec<u8>>,
-    broadcast_from_input: broadcast::Sender <Vec<u8>>, 
+    broadcast_from_input_rx: Option<broadcast::Receiver <Vec<u8>>>, 
 }
 
 impl RetransmitServer {
@@ -36,7 +35,7 @@ impl RetransmitServer {
     /// Create a new server that listens to messages broadcase through tx.
     /// This method start the server listening on the given port. Any connected clients will retransmit
     /// any data sent to the tx sender (each instance subscribes to this broadcast sender).
-    pub async fn new (port: u16, tx_to_input: mpsc::Sender<Vec<u8>>, broadcast_from_input: broadcast::Sender<Vec<u8>>) -> io::Result <RetransmitServer> {
+    pub async fn new (port: u16, tx_to_input: mpsc::Sender<Vec<u8>>, broadcast_from_input_rx: broadcast::Receiver<Vec<u8>>) -> io::Result <RetransmitServer> {
         let server = TcpListener::bind("0.0.0.0:".to_owned() + &port.to_string()).await?;
 
         println! ("Starting TCP retransmission server at 0.0.0.0:{}", port);
@@ -44,7 +43,7 @@ impl RetransmitServer {
         Ok(RetransmitServer {
             server: server,
             tx_to_input: tx_to_input,
-            broadcast_from_input: broadcast_from_input,
+            broadcast_from_input_rx: Some(broadcast_from_input_rx),
         })
     }
 
@@ -52,11 +51,11 @@ impl RetransmitServer {
     ///
     /// This loop listens for new connections and spawn a new tokio process with a unique reciever.
     /// The spawned processes will simply retransmit the data recieved until the socket or the reciever is closed.
-    pub async fn run_loop (& self) { 
+    pub async fn run_loop (&mut self) { 
         loop {
             //second item contains the ip and port of the new connection
             let (mut client_socket, socket_address) = self.server.accept().await.unwrap();
-            let mut rx_from_input = self.broadcast_from_input.subscribe();
+            let mut rx_from_input = self.broadcast_from_input_rx.take().expect("Can't start reciever loop more than once.");
             let tx_from_client = self.tx_to_input.clone();
             println!("Accepted client connection at {}", socket_address);
         

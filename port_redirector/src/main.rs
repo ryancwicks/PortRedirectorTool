@@ -107,18 +107,17 @@ The above command will open the serial port on COM6 at 115200 baud and retransmi
 
 
     //Broadcast port for reading in data on the input port and outputting it on all broadcast channels
-    let (broadcast_from_input, _) = broadcast::channel(32);
-    let broadcast_from_input_1 = broadcast_from_input.clone();
+    let (broadcast_from_input_tx, broadcast_from_input_rx) = broadcast::channel(32);
 
     //Mutiple producers to read data in from the server ports and output on the single output port.
     let (tx_to_input, rx_to_input) = mpsc::channel(32);
 
     //open the socket and start the reading process.
     let mut socket_reader = InputSocket::connect(socket_type).await?;
-    tokio::spawn( async move { socket_reader.run_loop(broadcast_from_input, rx_to_input).await; });
+    tokio::spawn( async move { socket_reader.run_loop(broadcast_from_input_tx, rx_to_input).await; });
 
     // Set up server.
-    let retransmit_server = RetransmitServer::new(output_port, tx_to_input, broadcast_from_input_1).await?;
+    let mut retransmit_server = RetransmitServer::new(output_port, tx_to_input, broadcast_from_input_rx).await?;
     tokio::spawn( async move { retransmit_server.run_loop().await; });
 
     match signal::ctrl_c().await {
