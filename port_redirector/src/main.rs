@@ -5,7 +5,7 @@ use port_redirector::retransmit_server::RetransmitServer;
 use tokio::io;
 use tokio::signal;
 use tokio::sync::{mpsc, broadcast};
-use clap::{Arg, App, value_t};
+use clap::{Arg, Command};
 use std::fmt::Write;
 
 /// This program opens the provided port (either TCP, UDP or Serial), starts a TCP server, and retransmits any data 
@@ -18,84 +18,84 @@ use std::fmt::Write;
 async fn main() -> io::Result<()> {
    
     //Parse the input arguments.
-    let matches = App::new ("port_redirector_tool")
+    let matches = Command::new ("port_redirector_tool")
         .about(
 "This application takes input from a UDP, Serial or TCP port and redirects out on a TCP server that multiple clients can connect to.
-\tUsage: TCP input:  
+\tUsage: TCP input:
 \t\tport_redirector_tool -t tcp -e 192.168.42.110 -p 5001 -o 8001\n
-\n The above command will open up TCP port 5001 on 192.168.42.110 and locally serve whatever it reads to TCP clients that connect to localhost 8001.\n 
-\tUDP Input: 
+\n The above command will open up TCP port 5001 on 192.168.42.110 and locally serve whatever it reads to TCP clients that connect to localhost 8001.\n
+\tUDP Input:
 \t\tport_redirector_tool -t udp -p 5001 -o 8001\n
- The above command will open up the local port 5001 with UDP and retransmit any UDP data sent to it through to clients that connect to localhost 8001. \n 
+ The above command will open up the local port 5001 with UDP and retransmit any UDP data sent to it through to clients that connect to localhost 8001. \n
 \tSerial Input:
-\t\t port_redirector_tool -t serial -e COM6 -b 115200 -o 8001\n 
+\t\t port_redirector_tool -t serial -e COM6 -b 115200 -o 8001\n
 The above command will open the serial port on COM6 at 115200 baud and retransmit any data recieved to clients connected to the TCP server at localhost 8001. \n" )
-        .arg(Arg::with_name("type")
-                    .short("t")
+        .arg(Arg::new("type")
+                    .short('t')
                     .long("type")
-                    .takes_value(true)
+                    .value_name("TYPE")
                     .required(true)
                     .help("What type of input: 'Serial', 'TCP', 'UDP'"))
-        .arg(Arg::with_name("endpoint")
-                    .short("e")
+        .arg(Arg::new("endpoint")
+                    .short('e')
                     .long("endpoint")
-                    .takes_value(true)
+                    .value_name("ENDPOINT")
                     .help("What endpoint to listen too (<ip> for TCP or <com port> for Serial"))
-        .arg(Arg::with_name("port")
-                    .short("p")
+        .arg(Arg::new("port")
+                    .short('p')
                     .long("port")
-                    .takes_value(true)
+                    .value_name("PORT")
                     .help("What port to listen on (UDP and TCP)"))
-        .arg(Arg::with_name("baudrate")
-                    .short("b")
+        .arg(Arg::new("baudrate")
+                    .short('b')
                     .long("baudrate")
-                    .takes_value(true)
+                    .value_name("BAUDRATE")
                     .help("Baudrate for the serial port (default 9600)"))
-        .arg(Arg::with_name("output_port")
-                    .short("o")
+        .arg(Arg::new("output_port")
+                    .short('o')
                     .long("output_port")
-                    .takes_value(true)
+                    .value_name("OUTPUT_PORT")
                     .required(true)
                     .help("What port to listen on for the TCP redirector server."))
         .get_matches();
 
 
-    let output_port = clap::value_t!(matches, "output_port", u16).unwrap_or_else(|e| {
-        println!("{}",e); 
-        e.exit();
-    });
-    let socket_type_name = matches.value_of("type").unwrap().to_ascii_lowercase(); //guaranteed to exist due to CLAP's required flag.
+    let output_port = matches.get_one::<String>("output_port")
+        .expect("output_port is required")
+        .parse::<u16>()
+        .expect("output_port must be a valid u16");
+    let socket_type_name = matches.get_one::<String>("type")
+        .expect("type is required")
+        .to_ascii_lowercase();
 
 
     let socket_type = match socket_type_name.as_str() {
         "missing" => {return Err(io::Error::new(io::ErrorKind::Other, "Missing parameter socket type name."));}
         "tcp" => {
-            let ip = clap::value_t! (matches, "endpoint", String).unwrap_or_else (|e| {
-                println!("Enpoint IP address required: {}",e); 
-                e.exit();
-            });
-            let port = clap::value_t!(matches, "port", u16).unwrap_or_else(|e| {
-                println!("Port required: {}",e); 
-                e.exit();
-            });
+            let ip = matches.get_one::<String>("endpoint")
+                .expect("Endpoint IP address required for TCP")
+                .to_string();
+            let port = matches.get_one::<String>("port")
+                .expect("Port required for TCP")
+                .parse::<u16>()
+                .expect("Port must be a valid u16");
             InputSocket::TcpSocket { ip: ip.to_string(), port: Some(port), rd: None, tx: None }
         }
         "udp" => {
-            let port = clap::value_t!(matches, "port", u16).unwrap_or_else(|e| {
-                println!("Port required: {}",e); 
-                e.exit();
-            });
+            let port = matches.get_one::<String>("port")
+                .expect("Port required for UDP")
+                .parse::<u16>()
+                .expect("Port must be a valid u16");
             InputSocket::UdpSocket {port: port, rd: None}
         }
         "serial" => {
-            let port_name = clap::value_t! (matches, "endpoint", String).unwrap_or_else (|e| {
-                println!("Serial port name required: {}",e); 
-                e.exit();
-            });
-            let baudrate = clap::value_t!(matches, "baudrate", u32).unwrap_or_else(|e| {
-                println!("Baudrate required: {}",e); 
-                e.exit();
-            });
+            let port_name = matches.get_one::<String>("endpoint")
+                .expect("Serial port name required")
+                .to_string();
+            let baudrate = matches.get_one::<String>("baudrate")
+                .expect("Baudrate required for Serial")
+                .parse::<u32>()
+                .expect("Baudrate must be a valid u32");
             InputSocket::Serial {port_name: port_name, baudrate: Some(baudrate), rd: None, tx: None}
         }
         _ =>  { 
