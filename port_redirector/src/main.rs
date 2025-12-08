@@ -20,10 +20,13 @@ async fn main() -> io::Result<()> {
     //Parse the input arguments.
     let matches = Command::new ("port_redirector_tool")
         .about(
-"This application takes input from a UDP, Serial or TCP port and redirects out on a TCP server that multiple clients can connect to.
-\tUsage: TCP input:
+"This application takes input from a UDP, Serial or TCP client or TCP server and redirects out on a TCP server that multiple clients can connect to.
+\tUsage: TCP client input:
 \t\tport_redirector_tool -t tcp -e 192.168.42.110 -p 5001 -o 8001\n
 \n The above command will open up TCP port 5001 on 192.168.42.110 and locally serve whatever it reads to TCP clients that connect to localhost 8001.\n
+\t TCP server input:
+\t\tport_redirector_tool -t tcps -p 5001 -o 8001\n
+\n The above command will open up a TCP server lisenting on 0.0.0.0/5001, and locally serve the input out on port 8110.\n
 \tUDP Input:
 \t\tport_redirector_tool -t udp -p 5001 -o 8001\n
  The above command will open up the local port 5001 with UDP and retransmit any UDP data sent to it through to clients that connect to localhost 8001. \n
@@ -35,7 +38,7 @@ The above command will open the serial port on COM6 at 115200 baud and retransmi
                     .long("type")
                     .value_name("TYPE")
                     .required(true)
-                    .help("What type of input: 'Serial', 'TCP', 'UDP'"))
+                    .help("What type of input: 'Serial', 'TCP', 'TCPS', 'UDP'"))
         .arg(Arg::new("endpoint")
                     .short('e')
                     .long("endpoint")
@@ -45,7 +48,7 @@ The above command will open the serial port on COM6 at 115200 baud and retransmi
                     .short('p')
                     .long("port")
                     .value_name("PORT")
-                    .help("What port to listen on (UDP and TCP)"))
+                    .help("What port to listen on (UDP, TCP and TCPS)"))
         .arg(Arg::new("baudrate")
                     .short('b')
                     .long("baudrate")
@@ -80,6 +83,13 @@ The above command will open the serial port on COM6 at 115200 baud and retransmi
                 .parse::<u16>()
                 .expect("Port must be a valid u16");
             InputSocket::TcpSocket { ip: ip.to_string(), port: Some(port), rd: None, tx: None }
+        },
+        "tcps" => {
+            let port = matches.get_one::<String>("port")
+                .expect("Listen port required for TCP Server")
+                .parse::<u16>()
+                .expect("Port must be a valid u16");
+            InputSocket::TcpServer { port, server: None, stream: None }
         }
         "udp" => {
             let port = matches.get_one::<String>("port")

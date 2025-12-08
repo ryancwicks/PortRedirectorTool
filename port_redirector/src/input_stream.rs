@@ -1,7 +1,7 @@
 //! This module contains the InputStream structure which is used to handle incoming data streams, either TCP, UDP or serial connections.
 
 use tokio::io::{self, AsyncWriteExt, AsyncReadExt};
-use tokio::net::{TcpStream, UdpSocket};
+use tokio::net::{TcpStream, UdpSocket, TcpListener};
 use tokio_serial::{SerialPortBuilderExt, SerialStream};
 use tokio::sync::{mpsc, broadcast};
 
@@ -21,6 +21,13 @@ pub enum InputSocket {
         port: Option<u16>,
         rd: Option<io::ReadHalf<TcpStream>>,
         tx: Option<io::WriteHalf<TcpStream>>
+    },
+    /// TCP server that listens for a single connection, and only that one connection.
+    ///
+    TcpServer {
+        port: u16,
+        server: Option<TcpListener>,
+        stream: Option<TcpStream>,
     },
     /// As UDP is stateless, you only need to send a port value.
     /// ```rust
@@ -60,13 +67,22 @@ impl InputSocket {
                     None => ip.clone()
                 };
                 
-                let socket = TcpStream::connect(&endpoint ).await?;
+                let socket = TcpStream::connect(&endpoint).await?;
                 let (rd, tx) = io::split(socket);
                 let socket = InputSocket::TcpSocket{ip: ip, port: port, rd:  Some(rd), tx: Some(tx)};
 
                 println!("Open TCP listener on {}.", endpoint);
                 Ok(socket)
             },
+            InputSocket::TcpServer {port, ..} => {
+                let endpoint = "0.0.0.0:".to_owned() + &port.to_string();
+
+                let server = TcpListener::bind(&endpoint).await?;
+                let socket = InputSocket::TcpServer{port: port, server: Some(server), stream: None};
+                println!("Input TCP server lisenting on port {}", port);
+
+                Ok(socket)
+            }
             InputSocket::UdpSocket {port, ..} => {
                 let sock = UdpSocket::bind("0.0.0.0:".to_owned() + &port.to_string()).await?;
                 let socket = InputSocket::UdpSocket{port: port, rd:  Some(sock)};
@@ -104,6 +120,37 @@ impl InputSocket {
                 }; 
                 Ok(rd.read(buf).await?)
             },
+            InputSocket::TcpServer{server, stream, ..} => {
+                // Try to read from existing stream if available
+                if let Some(ref mut tcp_stream) = stream {
+                    match tcp_stream.read(buf).await {
+                        Ok(0) => {
+                            // Socket closed, clear it
+                            *stream = None;
+                            println!("Input client disconnected, waiting for new connection.");
+                            return Ok(0);
+                        },
+                        Ok(n) => {
+                            return Ok(n);
+                        },
+                        Err(e) => {
+                            eprintln!("Error reading from tcp server stream: {:?}", e);
+                            // Clear the stream on error
+                            *stream = None;
+                            return Err(e);
+                        }
+                    }
+                }
+
+                // No client connected, accept a new one
+                let listener = server.as_ref()
+                    .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "Uninitialized TCP Server."))?;
+
+                let (new_stream, _addr) = listener.accept().await?;
+                println!("TCP Server: New client connected from {}", _addr);
+                *stream = Some(new_stream);
+                Ok(0)
+            },
             InputSocket::UdpSocket {rd, ..} => {
                 let rd = match rd {
                     Some(val) => val,
@@ -133,6 +180,16 @@ impl InputSocket {
                 tx.write_all(&buf).await?;
                 Ok(length)
             },
+            InputSocket::TcpServer{stream, ..} => {
+                if let Some(ref mut tcp_stream) = stream {
+                    let written = buf.len();
+                    tcp_stream.write_all(&buf).await?;
+                    Ok(written)
+                } else {
+                    // No client connected, can't write
+                    Ok(0)
+                }
+            }
             InputSocket::UdpSocket {..} => {
                 Ok(0)
             },
