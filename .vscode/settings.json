@@ -1,6 +1,0 @@
-{
-    "git.alwaysShowStagedChangesResourceGroup": true,
-    "git-graph.sourceCodeProviderIntegrationLocation": "More Actions",
-    "scm.alwaysShowRepositories": true,
-    "scm.diffDecorationsIgnoreTrimWhitespace": "true"
-}
