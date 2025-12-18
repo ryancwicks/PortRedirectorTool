@@ -2,7 +2,7 @@
 
 use tokio::io::{self, AsyncWriteExt, AsyncReadExt};
 use tokio::net::{TcpStream, UdpSocket, TcpListener};
-use tokio_serial::{SerialPortBuilderExt, SerialStream};
+use tokio_serial::{SerialPortBuilder, SerialPortBuilderExt, SerialStream, SerialPort};
 use tokio::sync::{mpsc, broadcast};
 
 
@@ -95,11 +95,28 @@ impl InputSocket {
                     None => 9600
                 };
 
-                let serial_port = tokio_serial::new(port_name.clone(), baudrate).open_native_async().expect("unable to open serial port");
-                let (rd, tx) = io::split(serial_port);
+                let sp_build: SerialPortBuilder = tokio_serial::new(port_name.clone(), baudrate);
+                let mut serial_str = match sp_build.open_native_async() {
+                    Err(e) => {
+                        eprintln!("Error opening {} {}", port_name, e);
+                        panic!();
+                    },
+                    Ok(str) => str
+                };
+                
+                let dtr_ok = serial_str.write_data_terminal_ready(true).is_ok();
+
+                if dtr_ok {
+                    println!("DTR Set");
+                } else {
+                    println!("Error setting DTR (ignored)");
+                };
+
+                let (rd, tx) = io::split(serial_str);
                 let socket = InputSocket::Serial{port_name: port_name.clone(), baudrate: Some(baudrate), rd: Some(rd), tx: Some(tx)};
 
                 println!("Opened Serial listener on port {} at {} baud.", port_name, baudrate);
+
                 Ok(socket)
             }
         }
