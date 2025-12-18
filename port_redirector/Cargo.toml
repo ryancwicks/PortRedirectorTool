@@ -1,6 +1,6 @@
 [package]
 name = "port_redirector"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2018"
 authors = ["Ryan Wicks <ryan@voyis.com>"]
 homepage = "https://www.voyis.com"
@@ -21,6 +21,6 @@ path = "src/main.rs"
 [dependencies]
 tokio = { version = "1", features = ["full"] }
 bytes = "1"
-clap = "2.33.3"
-tokio-serial = "5.4.1"
+clap = "4"
+tokio-serial = "5"
 

@@ -27,7 +27,7 @@ use tokio::sync::{mpsc, broadcast};
 pub struct RetransmitServer {
     server: TcpListener,
     tx_to_input: mpsc::Sender <Vec<u8>>,
-    broadcast_from_input_rx: Option<broadcast::Receiver <Vec<u8>>>, 
+    broadcast_from_input_rx: broadcast::Receiver <Vec<u8>>,
 }
 
 impl RetransmitServer {
@@ -43,7 +43,7 @@ impl RetransmitServer {
         Ok(RetransmitServer {
             server: server,
             tx_to_input: tx_to_input,
-            broadcast_from_input_rx: Some(broadcast_from_input_rx),
+            broadcast_from_input_rx: broadcast_from_input_rx,
         })
     }
 
@@ -55,16 +55,39 @@ impl RetransmitServer {
         loop {
             //second item contains the ip and port of the new connection
             let (mut client_socket, socket_address) = self.server.accept().await.unwrap();
-            let mut rx_from_input = self.broadcast_from_input_rx.take().expect("Can't start reciever loop more than once.");
+            let mut rx_from_input = self.broadcast_from_input_rx.resubscribe();
             let tx_from_client = self.tx_to_input.clone();
             println!("Accepted client connection at {}", socket_address);
         
-            tokio::spawn(async move {        
+            tokio::spawn(async move {
                 loop {
-                    let mut buf = vec![0; 1024]; 
+                    let mut buf = vec![0; 1024];
                     tokio::select! {
-                        Ok(data) = rx_from_input.recv() => client_socket.write_all(&data).await.expect("Unexpected socket connection close."),
-                        Ok(_data) = client_socket.read(&mut buf) => tx_from_client.send(buf).await.expect("Failed to send data from client to input socket.")
+                        Ok(data) = rx_from_input.recv() => {
+                            if let Err(_) = client_socket.write_all(&data).await {
+                                println!("Client {} disconnected (write failed)", socket_address);
+                                break;
+                            }
+                        },
+                        result = client_socket.read(&mut buf) => {
+                            match result {
+                                Ok(0) => {
+                                    println!("Client {} disconnected (connection closed)", socket_address);
+                                    break;
+                                },
+                                Ok(n) => {
+                                    buf.truncate(n);
+                                    if let Err(_) = tx_from_client.send(buf).await {
+                                        println!("Failed to send data from client {} to input socket", socket_address);
+                                        break;
+                                    }
+                                },
+                                Err(_) => {
+                                    println!("Client {} disconnected (read error)", socket_address);
+                                    break;
+                                }
+                            }
+                        }
                     };
                 }
             });
