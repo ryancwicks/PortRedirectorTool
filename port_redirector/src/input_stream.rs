@@ -224,16 +224,19 @@ impl InputSocket {
 
     pub async fn run_loop (&mut self, tx_channel: broadcast::Sender<Vec<u8>>, mut rx_channel: mpsc::Receiver<Vec<u8>>) {
         loop {
-            let mut buf = vec![0; 1024];
+            let mut buf = vec![0; 8192];
 
             tokio::select!{
                 Some(val) = rx_channel.recv() => {
                     self.write(&val).await.expect("Unexpected MPSC write error");
                 },
 
-                Ok(_data) = self.read(&mut buf) => match tx_channel.send(buf) {
-                    Ok(_) =>(),
-                    Err(_) => ()
+                Ok(n) = self.read(&mut buf) => {
+                    buf.truncate(n);
+                    match tx_channel.send(buf) {
+                        Ok(_) =>(),
+                        Err(_) => ()
+                    }
                 },
             };
         }

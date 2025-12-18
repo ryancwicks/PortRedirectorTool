@@ -117,10 +117,10 @@ The above command will open the serial port on COM6 at 115200 baud and retransmi
 
 
     //Broadcast port for reading in data on the input port and outputting it on all broadcast channels
-    let (broadcast_from_input_tx, broadcast_from_input_rx) = broadcast::channel(32);
+    let (broadcast_from_input_tx, broadcast_from_input_rx) = broadcast::channel(256);
 
     //Mutiple producers to read data in from the server ports and output on the single output port.
-    let (tx_to_input, rx_to_input) = mpsc::channel(32);
+    let (tx_to_input, rx_to_input) = mpsc::channel(256);
 
     //open the socket and start the reading process.
     let mut socket_reader = InputSocket::connect(socket_type).await?;

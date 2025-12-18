@@ -1,12 +1,12 @@
 //! This server listens on a given port and retransmits any data to any connected clients recieved from the broadcast queue.
 use tokio::io::{self, AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
-use tokio::sync::{mpsc, broadcast};
+use tokio::sync::{broadcast, mpsc};
 
 /// RetransmitServer
 ///
-/// This server runs a TCP server asynchronously and every client will retransmit any data sent to the 
-/// tx channel and any data recieved on any socket will be sent on the rx channel. 
+/// This server runs a TCP server asynchronously and every client will retransmit any data sent to the
+/// tx channel and any data recieved on any socket will be sent on the rx channel.
 ///
 /// ```rust
 /// //Broadcast port for reading in data on the input port and outputting it on all broadcast channels
@@ -26,19 +26,25 @@ use tokio::sync::{mpsc, broadcast};
 /// ```
 pub struct RetransmitServer {
     server: TcpListener,
-    tx_to_input: mpsc::Sender <Vec<u8>>,
-    broadcast_from_input_rx: broadcast::Receiver <Vec<u8>>,
+    tx_to_input: mpsc::Sender<Vec<u8>>,
+    broadcast_from_input_rx: broadcast::Receiver<Vec<u8>>,
 }
 
 impl RetransmitServer {
-
     /// Create a new server that listens to messages broadcase through tx.
     /// This method start the server listening on the given port. Any connected clients will retransmit
     /// any data sent to the tx sender (each instance subscribes to this broadcast sender).
-    pub async fn new (port: u16, tx_to_input: mpsc::Sender<Vec<u8>>, broadcast_from_input_rx: broadcast::Receiver<Vec<u8>>) -> io::Result <RetransmitServer> {
+    pub async fn new(
+        port: u16,
+        tx_to_input: mpsc::Sender<Vec<u8>>,
+        broadcast_from_input_rx: broadcast::Receiver<Vec<u8>>,
+    ) -> io::Result<RetransmitServer> {
         let server = TcpListener::bind("0.0.0.0:".to_owned() + &port.to_string()).await?;
 
-        println! ("Starting TCP retransmission server at 0.0.0.0:{}", port);
+        println!(
+            "Starting TCP output retransmission server at 0.0.0.0:{}",
+            port
+        );
 
         Ok(RetransmitServer {
             server: server,
@@ -47,21 +53,21 @@ impl RetransmitServer {
         })
     }
 
-    /// The main run loop. 
+    /// The main run loop.
     ///
     /// This loop listens for new connections and spawn a new tokio process with a unique reciever.
     /// The spawned processes will simply retransmit the data recieved until the socket or the reciever is closed.
-    pub async fn run_loop (&mut self) { 
+    pub async fn run_loop(&mut self) {
         loop {
             //second item contains the ip and port of the new connection
             let (mut client_socket, socket_address) = self.server.accept().await.unwrap();
             let mut rx_from_input = self.broadcast_from_input_rx.resubscribe();
             let tx_from_client = self.tx_to_input.clone();
-            println!("Accepted client connection at {}", socket_address);
-        
+            println!("Accepted output client connection at {}", socket_address);
+
             tokio::spawn(async move {
                 loop {
-                    let mut buf = vec![0; 1024];
+                    let mut buf = vec![0; 8192];
                     tokio::select! {
                         Ok(data) = rx_from_input.recv() => {
                             if let Err(_) = client_socket.write_all(&data).await {
@@ -72,7 +78,7 @@ impl RetransmitServer {
                         result = client_socket.read(&mut buf) => {
                             match result {
                                 Ok(0) => {
-                                    println!("Client {} disconnected (connection closed)", socket_address);
+                                    println!("Input Client {} disconnected (connection closed)", socket_address);
                                     break;
                                 },
                                 Ok(n) => {
@@ -91,13 +97,6 @@ impl RetransmitServer {
                     };
                 }
             });
-        
         }
-        
     }
 }
-
-
-
-
-
