@@ -4,6 +4,8 @@ use tokio::io::{self, AsyncWriteExt, AsyncReadExt};
 use tokio::net::{TcpStream, UdpSocket, TcpListener};
 use tokio_serial::{SerialPortBuilder, SerialPortBuilderExt, SerialStream, SerialPort};
 use tokio::sync::{mpsc, broadcast};
+use tokio::time::{sleep, Duration};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 
 /// This enum represents the different input sockets supported by the input connection.
@@ -223,6 +225,10 @@ impl InputSocket {
     }
 
     pub async fn run_loop (&mut self, tx_channel: broadcast::Sender<Vec<u8>>, mut rx_channel: mpsc::Receiver<Vec<u8>>) {
+        // Statistics tracking
+        static DROPPED_MESSAGES: AtomicU64 = AtomicU64::new(0);
+        static BACKPRESSURE_EVENTS: AtomicU64 = AtomicU64::new(0);
+
         loop {
             let mut buf = vec![0; 8192];
 
@@ -233,9 +239,44 @@ impl InputSocket {
 
                 Ok(n) = self.read(&mut buf) => {
                     buf.truncate(n);
-                    match tx_channel.send(buf) {
-                        Ok(_) =>(),
-                        Err(_) => ()
+
+                    // Implement backpressure with exponential backoff
+                    let mut retry_count = 0;
+                    const MAX_RETRIES: u32 = 10;
+                    const BASE_DELAY_MS: u64 = 1;
+
+                    loop {
+                        match tx_channel.send(buf.clone()) {
+                            Ok(_) => {
+                                // Successfully sent
+                                if retry_count > 0 {
+                                    println!("Backpressure resolved after {} retries", retry_count);
+                                }
+                                break;
+                            },
+                            Err(broadcast::error::SendError(_)) => {
+                                if retry_count == 0 {
+                                    // First backpressure event
+                                    let bp_count = BACKPRESSURE_EVENTS.fetch_add(1, Ordering::Relaxed) + 1;
+                                    eprintln!("WARNING: Broadcast channel full, applying backpressure (event #{})", bp_count);
+                                }
+
+                                if retry_count >= MAX_RETRIES {
+                                    // Max retries exceeded, drop the message
+                                    let dropped = DROPPED_MESSAGES.fetch_add(1, Ordering::Relaxed) + 1;
+                                    eprintln!("ERROR: Message dropped after {} retries (total dropped: {})", MAX_RETRIES, dropped);
+                                    break;
+                                }
+
+                                // Exponential backoff: 1ms, 2ms, 4ms, 8ms, 16ms, 32ms, 64ms, 128ms, 256ms, 512ms
+                                let delay_ms = BASE_DELAY_MS * (1 << retry_count);
+                                if retry_count % 3 == 0 {
+                                    eprintln!("Backpressure: retry {} after {}ms delay", retry_count + 1, delay_ms);
+                                }
+                                sleep(Duration::from_millis(delay_ms)).await;
+                                retry_count += 1;
+                            }
+                        }
                     }
                 },
             };

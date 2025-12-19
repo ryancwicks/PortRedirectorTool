@@ -2,6 +2,8 @@
 use tokio::io::{self, AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio::sync::{broadcast, mpsc};
+use tokio::time::{timeout, Duration};
+use std::collections::VecDeque;
 
 /// RetransmitServer
 ///
@@ -66,13 +68,66 @@ impl RetransmitServer {
             println!("Accepted output client connection at {}", socket_address);
 
             tokio::spawn(async move {
+                // Per-client buffer to handle temporary slow writes
+                let mut pending_writes: VecDeque<Vec<u8>> = VecDeque::new();
+                const MAX_PENDING_WRITES: usize = 100;
+                const WRITE_TIMEOUT_MS: u64 = 5000; // 5 second timeout for writes
+                let mut slow_client_warnings = 0;
+
                 loop {
                     let mut buf = vec![0; 8192];
+
+                    // Try to flush pending writes first
+                    while let Some(data) = pending_writes.front() {
+                        match timeout(Duration::from_millis(WRITE_TIMEOUT_MS), client_socket.write_all(data)).await {
+                            Ok(Ok(())) => {
+                                pending_writes.pop_front();
+                            },
+                            Ok(Err(e)) => {
+                                eprintln!("Client {} disconnected (write error: {})", socket_address, e);
+                                return;
+                            },
+                            Err(_) => {
+                                slow_client_warnings += 1;
+                                if slow_client_warnings % 5 == 1 {
+                                    eprintln!("WARNING: Client {} is slow (timeout #{}, {} messages pending)",
+                                             socket_address, slow_client_warnings, pending_writes.len());
+                                }
+                                if slow_client_warnings > 10 {
+                                    eprintln!("ERROR: Client {} too slow, disconnecting", socket_address);
+                                    return;
+                                }
+                                break; // Move on to handle other events
+                            }
+                        }
+                    }
+
                     tokio::select! {
                         Ok(data) = rx_from_input.recv() => {
-                            if let Err(_) = client_socket.write_all(&data).await {
-                                println!("Client {} disconnected (write failed)", socket_address);
-                                break;
+                            // Try to write immediately if no pending writes
+                            if pending_writes.is_empty() {
+                                match timeout(Duration::from_millis(WRITE_TIMEOUT_MS), client_socket.write_all(&data)).await {
+                                    Ok(Ok(())) => {
+                                        // Successfully written
+                                    },
+                                    Ok(Err(_)) => {
+                                        println!("Client {} disconnected (write failed)", socket_address);
+                                        break;
+                                    },
+                                    Err(_) => {
+                                        // Timeout, buffer the message
+                                        eprintln!("WARNING: Client {} write timeout, buffering message", socket_address);
+                                        pending_writes.push_back(data);
+                                    }
+                                }
+                            } else {
+                                // Already have pending writes, add to buffer
+                                if pending_writes.len() >= MAX_PENDING_WRITES {
+                                    eprintln!("ERROR: Client {} buffer full ({} messages), disconnecting",
+                                             socket_address, MAX_PENDING_WRITES);
+                                    break;
+                                }
+                                pending_writes.push_back(data);
                             }
                         },
                         result = client_socket.read(&mut buf) => {
